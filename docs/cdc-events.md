@@ -59,8 +59,9 @@ Observaciones:
   mientras que `source.ts_ms` es el momento en que el cambio se confirmó en la
   base de datos. La diferencia entre ambos es la latencia del CDC (~360 ms
   aquí, dominada por el intervalo de sondeo del conector).
-* No aparecen eventos `r` (lectura de snapshot): la tabla se creó después de
-  arrancar el conector, así que todo llegó por la fase de streaming.
+* No aparecen eventos `r` (lectura de snapshot): la tabla ya existía cuando
+  arrancó Debezium, pero el snapshot inicial se ejecutó sobre una tabla vacía,
+  así que no había filas que leer y todo llegó por la fase de streaming.
 * Está activado `tombstones.on.delete=false`; de lo contrario cada DELETE iría
   seguido de un segundo registro con payload vacío, que el sink de Redis
   guardaría como una entrada de ruido.

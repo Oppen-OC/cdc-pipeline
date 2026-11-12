@@ -26,9 +26,9 @@ services:
       timeout: 3s
       retries: 10
 
-  # 2. Redis: sink ligero para los eventos CDC (sin necesidad de Kafka).
-  #    Debezium Server 2.5 no incluye sink `file`, así que los eventos van a un
-  #    stream de Redis y después se exportan a cdc-output/cdc_events.json.
+  # 2. Redis Streams: transporte ligero para los eventos CDC (en lugar de Kafka:
+  #    un solo contenedor, consumer groups con ack por mensaje). Los eventos se
+  #    pueden exportar a cdc-output/cdc_events.json con export-events.py.
   #    La persistencia append-only conserva los eventos capturados entre reinicios.
   redis:
     image: redis:7-alpine

@@ -77,12 +77,12 @@ conector y no por el procesamiento en sí.
 
 ## Decisiones de diseño
 
-**Redis como sink en lugar de un fichero.** Debezium Server 2.5 no incluye un
-sink `file`: los módulos disponibles son `kafka`, `kinesis`, `pubsub`,
-`pulsar`, `eventhubs`, `redis`, `http`, `nats-*`, `pravega`, `rabbitmq`,
-`rocketmq`, `sqs` e `infinispan`. Redis mantiene el montaje ligero, no necesita
-un clúster de Kafka y ofrece algo que un fichero no podría: un consumer group
-con confirmación (ack) por mensaje.
+**Redis Streams en lugar de Kafka.** Debezium Server admite varios sinks
+(`kafka`, `kinesis`, `pubsub`, `pulsar`, `redis`, `http`, `nats-*`, `rabbitmq`,
+`sqs`...). Redis Streams es un único contenedor ligero, sin clúster de brokers
+que operar, y aun así ofrece lo esencial del transporte: un consumer group con
+confirmación (ack) por mensaje y reentrega de lo pendiente. Kafka aportaría
+particionado y retención a escala, que este proyecto no necesita.
 
 **Una cola entre la ingesta y el procesamiento.** El processor podría haber
 leído el WAL directamente, pero entonces una caída suya detendría la

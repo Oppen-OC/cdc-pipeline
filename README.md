@@ -70,10 +70,12 @@ contenedores.
 
 ```bash
 docker compose up -d --build
-docker compose ps          # cinco servicios, postgres y api healthy
+docker compose ps          # cinco servicios, postgres, redis y api healthy
 ```
 
-`cp .env.example .env` para cambiar credenciales (opcional).
+`cp .env.example .env` para cambiar credenciales (opcional). Solo surte efecto
+con el volumen de PostgreSQL vacío: antes del primer arranque o tras
+`docker compose down -v`.
 
 Los esquemas (`public.products` y `analytics.products_enriched`) se crean solos
 en el primer arranque con los scripts de `sql/init/`. Solo se ejecutan con el
@@ -95,6 +97,12 @@ sleep 10
 curl -s localhost:8000/products   # solo el id 1, con price 22.99
 ```
 
+```
+[{"id":1,"name":"Wireless Mouse","description":"Ergonomic 2.4G mouse","price":22.99,"price_with_vat":27.82,"category":"Peripherals","created_at":"2026-11-12T17:33:55.930210Z","last_op":"u","is_deleted":false,"ingested_at":"2026-11-12T17:33:56.518699Z"}]
+```
+
+El id 2 (Mechanical Keyboard) se borró en la demo, así que la API no lo lista.
+
 Ver cómo fluyen:
 
 ```bash
@@ -102,15 +110,16 @@ docker logs -f cdc_processor
 ```
 
 ```
-connected to postgres at postgres:5432
-processing stream 'inventory.public.products' as consumer 'processor-1'
-op=c id=1 lsn=26595880 applied=True
-op=c id=2 lsn=26596200 applied=True
-op=u id=1 lsn=26596432 applied=True
-op=d id=2 lsn=26596664 applied=True
+2026-11-12 17:33:45,093 INFO  consumer group 'analytics-processor' created on stream 'inventory.public.products'
+2026-11-12 17:33:45,099 INFO  connected to postgres at postgres:5432
+2026-11-12 17:33:45,099 INFO  processing stream 'inventory.public.products' as consumer 'processor-1'
+2026-11-12 17:33:56,513 INFO  op=c id=1 lsn=26513424 applied=True
+2026-11-12 17:33:56,516 INFO  op=c id=2 lsn=26513744 applied=True
+2026-11-12 17:33:56,519 INFO  op=u id=1 lsn=26513976 applied=True
+2026-11-12 17:33:56,521 INFO  op=d id=2 lsn=26514208 applied=True
 ```
 
-Para comprobar todo el recorrido (Postgres, Debezium, Redis, procesador y API) de una vez, `bash scripts/e2e.sh`; es la misma prueba que ejecuta el CI. Parte de un entorno limpio (`docker compose down -v`) y deja el stack levantado.
+Para comprobar todo el recorrido (Postgres, Debezium, Redis, procesador y API) de una vez, `bash scripts/e2e.sh`; es la misma prueba que ejecuta el CI. Requiere partir de un entorno limpio: ejecuta antes `docker compose down -v`. Deja el stack levantado.
 
 Para parar y limpiar: `docker compose down -v`.
 
@@ -143,6 +152,14 @@ En PowerShell de Windows usa `curl.exe`: el `curl` a secas es un alias de
 
 ## Qué demuestra
 
+Los cuatro ejemplos siguientes continúan, en orden, desde el arranque rápido
+(`docker compose down -v`, `docker compose up -d --build`, esperar al slot y
+ejecutar `sql/demo-mutations.sql`): la demo deja los ids 1 y 2, así que el
+producto nuevo recibe el id 3. Las salidas son reales, de una ejecución de este
+repo; los LSN, las marcas de tiempo y el orden pueden variar en la tuya.
+`scripts/e2e.sh` comprueba automáticamente las afirmaciones de los tres
+primeros apartados.
+
 ### El pipeline es en vivo, no por lotes
 
 Se escribe en la tabla de origen y se consulta la API; no se toca nada más:
@@ -151,70 +168,90 @@ Se escribe en la tabla de origen y se consulta la API; no se toca nada más:
 docker exec postgres_source psql -U postgres -d inventory_db -c \
   "INSERT INTO products (name, description, price) VALUES ('4K Monitor', '27 inch IPS panel', 329.00);"
 sleep 3
-curl -s localhost:8000/products
+curl -s localhost:8000/products/3
 ```
 
 ```
-1 Wireless Mouse  22.99   27.82  Peripherals
-3 USB-C Hub       45.50   55.05  Peripherals
-4 4K Monitor     329.00  398.09  Displays
+{"id":3,"name":"4K Monitor","description":"27 inch IPS panel","price":329.0,"price_with_vat":398.09,"category":"Displays","created_at":"2026-11-12T17:34:16.989390Z","last_op":"c","is_deleted":false,"ingested_at":"2026-11-12T17:34:17.574550Z"}
 ```
 
-La fila nueva llega con el IVA calculado y una categoría derivada de su
-nombre, tras atravesar el WAL, Debezium, Redis y el procesador.
+La fila nueva llega con el IVA calculado (`price_with_vat`) y una categoría
+derivada de su nombre, tras atravesar el WAL, Debezium, Redis y el procesador.
 
 ### Los borrados son lógicos (soft deletes)
 
 ```bash
-docker exec postgres_source psql -U postgres -d inventory_db -c "DELETE FROM products WHERE id = 5;"
+docker exec postgres_source psql -U postgres -d inventory_db -c "DELETE FROM products WHERE id = 3;"
 sleep 3
-curl -s localhost:8000/products                        # desaparece
-curl -s "localhost:8000/products?include_deleted=true" # sigue ahí, marcado
+curl -s localhost:8000/products/3   # sigue ahí, marcado como borrado
+curl -s localhost:8000/products     # desaparece del listado
 ```
 
 ```
-1 Wireless Mouse       active
-2 Mechanical Keyboard  deleted
-3 USB-C Hub            active
-4 4K Monitor           active
-5 4K Monitor           deleted
+{"id":3,"name":"4K Monitor","description":"27 inch IPS panel","price":329.0,"price_with_vat":398.09,"category":"Displays","created_at":"2026-11-12T17:34:16.989390Z","last_op":"d","is_deleted":true,"ingested_at":"2026-11-12T17:34:21.084254Z"}
+[{"id":1,"name":"Wireless Mouse","description":"Ergonomic 2.4G mouse","price":22.99,"price_with_vat":27.82,"category":"Peripherals","created_at":"2026-11-12T17:33:55.930210Z","last_op":"u","is_deleted":false,"ingested_at":"2026-11-12T17:33:56.518699Z"}]
 ```
+
+El id 3 conserva su fila con `"is_deleted":true`; solo el listado por defecto
+la oculta (`?include_deleted=true` la devuelve).
 
 ### La reentrega no puede corromper los datos
 
-Se rebobina el consumer group y se deja que el procesador reprocese todo:
+Se rebobina el consumer group y se deja que el procesador reprocese todo el
+stream. Se muestra `ingested_at` del id 1 antes y después:
 
 ```bash
+curl -s localhost:8000/products/1 | grep -o '"ingested_at":"[^"]*"'
 docker exec redis_sink redis-cli XGROUP SETID inventory.public.products analytics-processor 0
-docker logs -f cdc_processor
+sleep 5
+docker logs --tail 6 cdc_processor
+curl -s localhost:8000/products/1 | grep -o '"ingested_at":"[^"]*"'
 ```
 
 ```
-op=c id=1 lsn=26595880 applied=False
-op=c id=2 lsn=26596200 applied=False
-op=u id=1 lsn=26596432 applied=False
-op=d id=2 lsn=26596664 applied=False
-op=c id=3 lsn=27005016 applied=False
+"ingested_at":"2026-11-12T17:33:56.518699Z"
+OK
+2026-11-12 17:34:31,214 INFO  op=c id=1 lsn=26513424 applied=False
+2026-11-12 17:34:31,217 INFO  op=c id=2 lsn=26513744 applied=False
+2026-11-12 17:34:31,220 INFO  op=u id=1 lsn=26513976 applied=False
+2026-11-12 17:34:31,223 INFO  op=d id=2 lsn=26514208 applied=False
+2026-11-12 17:34:31,225 INFO  op=c id=3 lsn=26794880 applied=False
+2026-11-12 17:34:31,228 INFO  op=d id=3 lsn=26795536 applied=False
+"ingested_at":"2026-11-12T17:33:56.518699Z"
 ```
 
-La guarda por LSN rechaza todos los eventos y las marcas `ingested_at` no se
-modifican. Entrega at-least-once, efecto exactly-once.
+La guarda por LSN rechaza todos los eventos (`applied=False`) y la marca
+`ingested_at` no se modifica. Entrega at-least-once, efecto exactly-once.
 
 ### No se pierde nada mientras el procesador está caído
+
+Se actualiza una fila existente (el id 1) con el procesador parado; el evento
+espera en el stream y se aplica al volver:
 
 ```bash
 docker compose stop processor
 docker exec postgres_source psql -U postgres -d inventory_db -c \
-  "UPDATE products SET price = 39.90 WHERE id = 3;"
-docker exec redis_sink redis-cli XINFO GROUPS inventory.public.products   # el lag crece
-docker compose start processor                                           # el lag vuelve a 0
+  "UPDATE products SET price = 39.90 WHERE id = 1;"
+sleep 5
+docker exec redis_sink redis-cli XINFO GROUPS inventory.public.products | grep -A1 '^lag'   # lag 1: un evento esperando
+docker compose start processor
+sleep 8
+docker exec redis_sink redis-cli XINFO GROUPS inventory.public.products | grep -A1 '^lag'   # lag 0: puesto al día
+curl -s localhost:8000/products/1
+```
+
+```
+lag
+1
+lag
+0
+{"id":1,"name":"Wireless Mouse","description":"Ergonomic 2.4G mouse","price":39.9,"price_with_vat":48.28,"category":"Peripherals","created_at":"2026-11-12T17:33:55.930210Z","last_op":"u","is_deleted":false,"ingested_at":"2026-11-12T17:34:48.215528Z"}
 ```
 
 ## Decisiones de diseño
 
-* **Redis en lugar de un sink `file`**: Debezium Server 2.5 no incluye sink de
-  fichero; Redis evita un clúster de Kafka y añade confirmación (ack) por
-  mensaje con consumer groups.
+* **Redis Streams en lugar de Kafka**: un único contenedor ligero, sin clúster
+  de brokers, y aun así con consumer groups y confirmación (ack) por mensaje.
 * **Idempotencia por LSN**: cada fila guarda la posición del WAL que la produjo
   y el UPSERT ignora cualquier evento que no sea estrictamente más reciente.
 * **Commit antes del acknowledge**: un fallo provoca una reentrega, no una
@@ -244,6 +281,8 @@ Detalle en [docs/architecture.md](./docs/architecture.md#limitaciones-conocidas)
 .
 ├── docker-compose.yml                    # todo el stack
 ├── .github/workflows/ci.yml              # CI: lint, tests unitarios y prueba e2e
+├── LICENSE                               # licencia MIT
+├── .env.example                          # credenciales configurables (copiar a .env)
 ├── scripts/e2e.sh                        # prueba end-to-end del pipeline completo
 ├── debezium-conf/application.properties  # configuración de origen y sink del CDC
 ├── sql/
@@ -253,6 +292,7 @@ Detalle en [docs/architecture.md](./docs/architecture.md#limitaciones-conocidas)
 │   └── demo-mutations.sql                # INSERT/UPDATE/DELETE de demostración
 ├── processor/
 │   ├── consumer.py                       # stream de Redis -> tabla analítica
+│   ├── test_consumer.py                  # tests unitarios de la transformación
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── api/
@@ -285,5 +325,7 @@ por línea.
 ## Licencia
 
 MIT, ver [LICENSE](LICENSE).
+
+---
 
 Proyecto desarrollado a partir de una práctica del Máster en IA y Big Data (UPV).
