@@ -71,11 +71,24 @@ docker compose up -d --build
 docker compose ps          # cinco servicios, postgres y api healthy
 ```
 
-Crear los esquemas y generar los primeros eventos de cambio:
+Los esquemas (`public.products` y `analytics.products_enriched`) se crean solos
+en el primer arranque con los scripts de `sql/init/`. Solo se ejecutan con el
+volumen vacío; para reinicializar, `docker compose down -v`.
+
+Antes de la demo hay que esperar a que Debezium tenga el slot de replicación
+activo; si no, los cambios anteriores se pierden. Repite el comando hasta que
+devuelva `t`:
 
 ```bash
-docker exec -i postgres_source psql -U postgres -d inventory_db -v ON_ERROR_STOP=1 < sql/02-analytics-schema.sql
-docker exec -i postgres_source psql -U postgres -d inventory_db -v ON_ERROR_STOP=1 < sql/01-products-mutations.sql
+docker exec postgres_source psql -U postgres -d inventory_db -tAc   "SELECT active FROM pg_replication_slots WHERE slot_name='debezium'"
+```
+
+Generar los primeros eventos de cambio:
+
+```bash
+docker exec -i postgres_source psql -U postgres -d inventory_db -v ON_ERROR_STOP=1 < sql/demo-mutations.sql
+sleep 10
+curl -s localhost:8000/products   # solo el id 1, con price 22.99
 ```
 
 Ver cómo fluyen:
@@ -106,6 +119,9 @@ Documentación interactiva, con los esquemas de respuesta, en
 | GET | `/products` | Estado actual de los productos. Parámetros: `limit` (1-500), `offset`, `include_deleted`, `category`. |
 | GET | `/products/{id}` | Un producto concreto; `404` si no existe. |
 | GET | `/stats` | Agregados: totales, activos/eliminados, estadísticas de precio y desglose por categoría. |
+
+Con el stack arrancado (`docker compose ps` con `api` healthy) y los eventos de
+la demo ya procesados:
 
 ```bash
 curl -s localhost:8000/health
@@ -223,8 +239,10 @@ Detalle en [docs/architecture.md](./docs/architecture.md#limitaciones-conocidas)
 ├── docker-compose.yml                    # todo el stack
 ├── debezium-conf/application.properties  # configuración de origen y sink del CDC
 ├── sql/
-│   ├── 01-products-mutations.sql         # tabla de origen y mutaciones de ejemplo
-│   └── 02-analytics-schema.sql           # tabla de servicio (idempotente)
+│   ├── init/                             # se ejecuta solo en el primer arranque
+│   │   ├── 01-source-schema.sql          # tabla de origen (public.products)
+│   │   └── 02-analytics-schema.sql       # tabla de servicio (idempotente)
+│   └── demo-mutations.sql                # INSERT/UPDATE/DELETE de demostración
 ├── processor/
 │   ├── consumer.py                       # stream de Redis -> tabla analítica
 │   ├── Dockerfile
@@ -244,7 +262,8 @@ Detalle en [docs/architecture.md](./docs/architecture.md#limitaciones-conocidas)
 
 El análisis de los eventos que emite Debezium (`op`, `before`, `after`) está en
 [docs/cdc-events.md](./docs/cdc-events.md). Para inspeccionarlos en una
-ejecución propia:
+ejecución propia, con el stack en marcha (el script ejecuta
+`docker exec redis_sink`, así que falla si el contenedor no está levantado):
 
 ```bash
 python export-events.py
