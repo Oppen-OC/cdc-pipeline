@@ -126,9 +126,9 @@ def test_handle_entry_skips_json_without_payload():
 
 
 def test_handle_entry_two_valid_fields():
-    cur = FakeCursor(rowcount=1)
+    cur = FakeCursor(rowcount=2)
     fields = {"k1": raw_event("c", 1), "k2": raw_event("c", 2)}
-    assert consumer.handle_entry(cur, fields) == 2
+    assert consumer.handle_entry(cur, fields) == 4
     assert [c["id"] for c in cur.calls] == [1, 2]
 
 
@@ -136,6 +136,13 @@ def test_handle_entry_malformed_json_raises_value_error():
     # El bucle principal depende de ello para hacer ack de mensajes rotos
     with pytest.raises(ValueError):
         consumer.handle_entry(FakeCursor(), {"k": "{not json"})
+
+
+def test_handle_entry_json_not_an_object_raises_attribute_error():
+    # JSON válido pero no objeto: el bucle principal lo captura (AttributeError)
+    # y hace ack igual que con un mensaje malformado
+    with pytest.raises(AttributeError):
+        consumer.handle_entry(FakeCursor(), {"k": "[]"})
 
 
 # --- eventos reales -----------------------------------------------------

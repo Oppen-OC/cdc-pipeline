@@ -265,7 +265,7 @@ def main():
                     # reintentar no lo arregla, se confirma igual que un malformado.
                     conn.rollback()
                     log.error("skipping entry %s after database error: %s", entry_id, exc)
-                except (KeyError, ValueError, TypeError) as exc:
+                except (KeyError, ValueError, TypeError, AttributeError) as exc:
                     # Evento malformado: se confirma, de lo contrario bloquearía
                     # la lista de pendientes para siempre.
                     conn.rollback()
