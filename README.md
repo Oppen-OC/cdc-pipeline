@@ -255,4 +255,8 @@ por línea.
 
 ---
 
+## Licencia
+
+MIT, ver [LICENSE](LICENSE).
+
 Proyecto desarrollado a partir de una práctica del Máster en IA y Big Data (UPV).
