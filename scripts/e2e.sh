@@ -24,7 +24,9 @@ esperar() {
 }
 
 slot_activo() { [ "$("${PSQL[@]}" -tAc "SELECT active FROM pg_replication_slots WHERE slot_name='debezium'" | tr -d '\r')" = "t" ]; }
-precio_actualizado() { curl -sf "$API/products/1" | grep -q '"price":22.99'; }
+precio_actualizado() { local body; body=$(curl -sf "$API/products/1") && grep -q '"price":22.99' <<<"$body"; }
+# Eventos rechazados por la guarda LSN (applied=False) que constan en los logs.
+rechazados() { docker logs cdc_processor 2>&1 | grep -c 'applied=False' || true; }
 
 echo "==> 1/6 Levantando el stack"
 docker compose up -d --build --wait
@@ -39,18 +41,23 @@ echo "==> 4/6 Esperando a que la API refleje el UPDATE (price 22.99, máx. 60 s)
 esperar 60 precio_actualizado || { echo "/products/1 no llegó a price 22.99" >&2; exit 1; }
 
 echo "==> 5/6 Comprobando soft delete, listado y estadísticas"
-curl -sf "$API/products/2" | grep -q '"is_deleted":true' \
+body=$(curl -sf "$API/products/2") || { echo "/products/2 no respondió 200" >&2; exit 1; }
+grep -q '"is_deleted":true' <<<"$body" \
   || { echo "/products/2 debería estar marcado como is_deleted" >&2; exit 1; }
-if curl -sf "$API/products" | grep -q '"id":2[,}]'; then
+body=$(curl -sf "$API/products") || { echo "/products no respondió 200" >&2; exit 1; }
+if grep -q '"id":2[,}]' <<<"$body"; then
   echo "/products no debería incluir el id 2 (borrado)" >&2; exit 1
 fi
 curl -sf -o /dev/null "$API/stats" || { echo "/stats no respondió 200" >&2; exit 1; }
 
 echo "==> 6/6 Idempotencia: reentregando todo el stream, ingested_at no debe cambiar"
-ingested() { curl -sf "$API/products/1" | grep -o '"ingested_at":"[^"]*"'; }
+ingested() { local b; b=$(curl -sf "$API/products/1") && grep -o '"ingested_at":"[^"]*"' <<<"$b"; }
 antes=$(ingested)
+rechazados_antes=$(rechazados)
 docker exec redis_sink redis-cli XGROUP SETID inventory.public.products analytics-processor 0
-sleep 10
+# Los 4 eventos de la demo (c, c, u, d) deben reentregarse y ser rechazados por la guarda LSN.
+reentregados() { [ "$(( $(rechazados) - rechazados_antes ))" -ge 4 ]; }
+esperar 60 reentregados || { echo "el procesador no reentregó los 4 eventos (applied=False)" >&2; exit 1; }
 despues=$(ingested)
 if [ "$antes" != "$despues" ]; then
   echo "ingested_at cambió tras la reentrega: $antes -> $despues" >&2; exit 1
