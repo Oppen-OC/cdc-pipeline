@@ -164,7 +164,7 @@ orquestador.
 | PostgreSQL se reinicia | Debezium se reconecta por sí mismo con sus reintentos internos y continúa desde el slot de replicación (`restart: unless-stopped` es el respaldo si el proceso sale). El processor detecta la conexión perdida, reconecta por sí mismo (sin que Docker reinicie el contenedor) y relee los pendientes del stream, sin perder eventos. |
 | API caída | La ingesta y el procesamiento continúan; solo la capa de servicio deja de estar disponible. |
 | Evento malformado | Se registra y se confirma, para que un mensaje venenoso no bloquee la lista de pendientes. |
-| Error de datos determinista (`DataError`, `IntegrityError`) | Se registra y se confirma: reintentarlo no lo arregla y bloquearía los pendientes para siempre. |
+| Cualquier otro error de base de datos (p. ej. `DataError`, `IntegrityError`) | Se registra y se confirma: reintentarlo no lo arregla y bloquearía los pendientes para siempre. |
 
 ## Limitaciones conocidas
 

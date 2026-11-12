@@ -245,14 +245,19 @@ def main():
                     conn.commit()
                 except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
                     # Conexión perdida (p. ej. PostgreSQL reiniciado) o deadlock:
-                    # transitorio, así que no se confirma. Se reconecta si hace
-                    # falta y se vuelve a "0" para releer los pendientes; el resto
-                    # del lote se relee desde ahí, por eso se sale del bucle.
+                    # transitorio, así que no se confirma. La conexión se descarta
+                    # siempre (un rollback sobre una conexión rota podría lanzar)
+                    # y se reconecta tras una pausa para que un error repetido no
+                    # gire en un bucle cerrado. Se vuelve a "0" para releer los
+                    # pendientes; el resto del lote se relee desde ahí, por eso
+                    # se sale del bucle.
                     log.error("database unavailable on entry %s: %s", entry_id, exc)
-                    if conn.closed:
-                        conn = connect_postgres()
-                    else:
-                        conn.rollback()
+                    try:
+                        conn.close()
+                    except psycopg2.Error:
+                        pass
+                    time.sleep(1)
+                    conn = connect_postgres()
                     cursor_id = "0"
                     break
                 except psycopg2.Error as exc:
