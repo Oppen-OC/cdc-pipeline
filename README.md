@@ -11,5 +11,9 @@ This module covers the stages of the data lifecycle, ingestion strategies (batch
     *   Build and deploy a functional end-to-end data pipeline that ingests, processes, stores, and exposes a dataset via a REST or gRPC API.
     *   Solution: [`end-to-end-pipeline/`](./end-to-end-pipeline/README.md)
 
+## Licencia
+
+MIT, ver [LICENSE](LICENSE).
+
 ---
 [⬅ Back to Home](../README.md)
