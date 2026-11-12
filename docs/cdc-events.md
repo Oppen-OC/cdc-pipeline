@@ -1,38 +1,39 @@
-# Captured CDC events
+# Eventos CDC capturados
 
-What Debezium emits for each change to `products`, taken from a real run. The raw
-events are in [`sample-events.jsonl`](./sample-events.jsonl), one JSON document per
-line; `python export-events.py` regenerates them from the Redis stream into
-`cdc-output/cdc_events.json`.
+Lo que Debezium emite por cada cambio en `products`, tomado de una ejecución
+real. Los eventos en bruto están en [`sample-events.jsonl`](./sample-events.jsonl),
+un documento JSON por línea; `python export-events.py` los regenera desde el
+stream de Redis en `cdc-output/cdc_events.json`.
 
-Two configuration details worth noting:
+Dos detalles de configuración que conviene conocer:
 
-* `ALTER TABLE products REPLICA IDENTITY FULL` — with the default replica
-  identity PostgreSQL only writes the primary key to the WAL for UPDATE/DELETE,
-  so the `before` block would contain nothing but `id`. `FULL` logs the whole
-  old row.
-* `debezium.source.decimal.handling.mode=double` — otherwise `price` is emitted
-  as a Kafka Connect `Decimal`, i.e. base64 bytes (`"Cic="` instead of `25.99`).
+* `ALTER TABLE products REPLICA IDENTITY FULL`: con la identidad de réplica por
+  defecto, PostgreSQL solo escribe la clave primaria en el WAL para UPDATE y
+  DELETE, así que el bloque `before` contendría únicamente `id`. `FULL` registra
+  la fila anterior completa.
+* `debezium.source.decimal.handling.mode=double`: de lo contrario `price` se
+  emite como un `Decimal` de Kafka Connect, es decir, bytes en base64 (`"Cic="`
+  en lugar de `25.99`).
 
-## Captured events
+## Eventos capturados
 
-`XLEN tutorial.public.products` returns **4** events, one per mutation:
+`XLEN inventory.public.products` devuelve **4** eventos, uno por mutación:
 
-| `op` | Operation | `before` | `after` |
+| `op` | Operación | `before` | `after` |
 | --- | --- | --- | --- |
 | `c` | CREATE | `null` | `id=1, Wireless Mouse, price=25.99` |
 | `c` | CREATE | `null` | `id=2, Mechanical Keyboard, price=89.99` |
 | `u` | UPDATE | `id=1, price=25.99` | `id=1, price=22.99` |
 | `d` | DELETE | `id=2, price=89.99` | `null` |
 
-The UPDATE event, as stored in [`sample-events.jsonl`](./sample-events.jsonl):
+El evento UPDATE, tal como está guardado en [`sample-events.jsonl`](./sample-events.jsonl):
 
 ```json
 {
   "before": { "id": 1, "name": "Wireless Mouse", "price": 25.99, "created_at": 1786981502839123 },
   "after":  { "id": 1, "name": "Wireless Mouse", "price": 22.99, "created_at": 1786981502839123 },
   "source": {
-    "version": "2.5.4.Final", "connector": "postgresql", "name": "tutorial",
+    "version": "2.5.4.Final", "connector": "postgresql", "name": "inventory",
     "snapshot": "false", "db": "inventory_db", "schema": "public", "table": "products",
     "txId": 732, "lsn": 26596432
   },
@@ -41,24 +42,26 @@ The UPDATE event, as stored in [`sample-events.jsonl`](./sample-events.jsonl):
 }
 ```
 
-Observations:
+Observaciones:
 
-* Each event carries a `schema` block plus a `payload` block; `payload` holds
-  `before` / `after` / `source` / `op` / `ts_ms`.
-* `before` is `null` for INSERTs and `after` is `null` for DELETEs — the state
-  that did not exist at that point in time.
-* `source.lsn` and `source.txId` tie the event to a WAL position and a
-  PostgreSQL transaction; the same LSN is what ends up in `offsets.dat`, and it
-  is how Debezium resumes without replaying events after a restart.
-* `ts_ms` at the top level is when Debezium processed the event, while
-  `source.ts_ms` is when the change was committed in the database. The gap
-  between them is the CDC latency (~360 ms here, dominated by the connector
-  poll interval).
-* No `r` (snapshot read) events appear: the table was created after the
-  connector started, so everything came through the streaming phase.
-* `tombstones.on.delete=false` is set — otherwise each DELETE would be followed
-  by a second record with an empty payload, which the Redis sink would store as
-  a noise entry.
+* Cada evento lleva un bloque `schema` y un bloque `payload`; `payload`
+  contiene `before` / `after` / `source` / `op` / `ts_ms`.
+* `before` es `null` en los INSERT y `after` es `null` en los DELETE: el estado
+  que no existía en ese instante.
+* `source.lsn` y `source.txId` vinculan el evento con una posición del WAL y una
+  transacción de PostgreSQL. Ese mismo LSN es el que acaba en `offsets.dat`, el
+  almacén de offsets de Debezium (último LSN confirmado), y con él Debezium
+  reanuda tras un reinicio sin reproducir eventos. El fichero se regenera en
+  cada ejecución y está excluido de git en `cdc-output/`.
+* `ts_ms` de primer nivel es el momento en que Debezium procesó el evento,
+  mientras que `source.ts_ms` es el momento en que el cambio se confirmó en la
+  base de datos. La diferencia entre ambos es la latencia del CDC (~360 ms
+  aquí, dominada por el intervalo de sondeo del conector).
+* No aparecen eventos `r` (lectura de snapshot): la tabla se creó después de
+  arrancar el conector, así que todo llegó por la fase de streaming.
+* Está activado `tombstones.on.delete=false`; de lo contrario cada DELETE iría
+  seguido de un segundo registro con payload vacío, que el sink de Redis
+  guardaría como una entrada de ruido.
 
 ---
-[⬅ Back to the project README](../README.md)
+[⬅ Volver al README del proyecto](../README.md)

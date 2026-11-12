@@ -1,171 +1,178 @@
-# Architecture
+# Arquitectura
 
-End-to-end data pipeline: every row written to a transactional PostgreSQL table
-is captured from the write-ahead log, streamed, enriched, materialised into an
-analytical table and served over a REST API, in a few seconds and without the
-application ever knowing.
+Pipeline de datos de extremo a extremo: cada fila escrita en una tabla
+transaccional de PostgreSQL se captura del write-ahead log, se envía por un
+stream, se enriquece, se materializa en una tabla analítica y se sirve por una
+API REST, en pocos segundos y sin que la aplicación de origen lo note.
 
-## Diagram
+## Diagrama
 
 ```mermaid
 flowchart LR
-    subgraph source["Source layer"]
+    subgraph source["Capa de origen"]
         PG[("PostgreSQL 15<br/>public.products")]
     end
 
-    subgraph ingest["Ingestion — log-based CDC"]
+    subgraph ingest["Ingesta — CDC basado en log"]
         DBZ["Debezium Server 2.5.4<br/>PostgresConnector"]
-        RDS[("Redis 7<br/>stream tutorial.public.products")]
+        RDS[("Redis 7<br/>stream inventory.public.products")]
     end
 
-    subgraph process["Processing — streaming"]
-        PROC["processor<br/>XREADGROUP + idempotent UPSERT"]
+    subgraph process["Procesamiento — streaming"]
+        PROC["processor<br/>XREADGROUP + UPSERT idempotente"]
     end
 
-    subgraph storage["Storage — serving table"]
+    subgraph storage["Almacenamiento — tabla de servicio"]
         ANA[("PostgreSQL 15<br/>analytics.products_enriched")]
     end
 
-    subgraph serve["Exposure"]
+    subgraph serve["Exposición"]
         API["FastAPI + uvicorn<br/>:8000"]
     end
 
-    CLIENT(["Client / curl"])
+    CLIENT(["Cliente / curl"])
 
-    PG -->|"logical replication<br/>slot, pgoutput"| DBZ
-    DBZ -->|"XADD, JSON change events"| RDS
+    PG -->|"replicación lógica<br/>slot, pgoutput"| DBZ
+    DBZ -->|"XADD, eventos de cambio en JSON"| RDS
     RDS -->|"XREADGROUP, consumer group"| PROC
     PROC -->|"INSERT ... ON CONFLICT"| ANA
-    ANA -->|"SELECT, connection pool"| API
+    ANA -->|"SELECT, pool de conexiones"| API
     API -->|"HTTP, JSON"| CLIENT
 ```
 
-## Components
+## Componentes
 
-| Component | Image | Port | Role |
+| Componente | Imagen | Puerto | Función |
 | --- | --- | --- | --- |
-| `postgres` | `postgres:15-alpine` | 5432 | Source table and, in a separate schema, the serving table. Started with `wal_level=logical`. |
-| `debezium` | `debezium/server:2.5` | — | Reads the WAL through a logical replication slot and emits one JSON change event per row mutation. |
-| `redis` | `redis:7-alpine` | 6379 | Event buffer between ingestion and processing. Append-only persistence enabled. |
-| `processor` | built from `./processor` | — | Consumes the stream, enriches the events and materialises the current state. |
-| `api` | built from `./api` | 8000 | Read-only REST layer over the serving table. |
+| `postgres` | `postgres:15-alpine` | 5432 | Tabla de origen y, en un esquema aparte, la tabla de servicio. Se arranca con `wal_level=logical`. |
+| `debezium` | `debezium/server:2.5` | — | Lee el WAL a través de un slot de replicación lógica y emite un evento de cambio JSON por cada mutación de fila. |
+| `redis` | `redis:7-alpine` | 6379 | Búfer de eventos entre la ingesta y el procesamiento. Persistencia append-only activada. |
+| `processor` | construida desde `./processor` | — | Consume el stream, enriquece los eventos y materializa el estado actual. |
+| `api` | construida desde `./api` | 8000 | Capa REST de solo lectura sobre la tabla de servicio. |
 
-## Data flow
+## Flujo de datos
 
-Following a single mutation end to end, `UPDATE products SET price = 22.99 WHERE id = 1`:
+Siguiendo una única mutación de extremo a extremo,
+`UPDATE products SET price = 22.99 WHERE id = 1`:
 
-1. **PostgreSQL** commits the transaction and writes it to the write-ahead log.
-   `REPLICA IDENTITY FULL` makes it log the complete previous row, not only the
-   primary key.
-2. **Debezium** decodes the WAL record through its replication slot and emits a
-   change event with `op: "u"`, a full `before` and `after` block, and the
-   originating `source.lsn` and `source.txId`.
-3. **Redis** stores the event in the stream `tutorial.public.products`. It acts
-   as a buffer: if the processor is down, events queue up instead of being lost.
-4. **The processor** reads it with `XREADGROUP`, computes `price_with_vat`,
-   derives `category` from the product name, converts the microsecond timestamp,
-   and UPSERTs the row.
-5. **PostgreSQL** stores the result in `analytics.products_enriched`, together
-   with the `source_lsn` that produced it.
-6. **The API** serves it as JSON on `GET /products`.
+1. **PostgreSQL** confirma la transacción y la escribe en el write-ahead log.
+   `REPLICA IDENTITY FULL` hace que registre la fila anterior completa, no solo
+   la clave primaria.
+2. **Debezium** decodifica el registro del WAL a través de su slot de
+   replicación y emite un evento de cambio con `op: "u"`, un bloque `before` y
+   otro `after` completos, y el `source.lsn` y `source.txId` de origen.
+3. **Redis** guarda el evento en el stream `inventory.public.products`. Actúa
+   como búfer: si el processor está caído, los eventos se encolan en lugar de
+   perderse.
+4. **El processor** lo lee con `XREADGROUP`, calcula `price_with_vat`, deriva
+   `category` a partir del nombre del producto, convierte la marca de tiempo en
+   microsegundos y hace UPSERT de la fila.
+5. **PostgreSQL** guarda el resultado en `analytics.products_enriched`, junto
+   con el `source_lsn` que lo produjo.
+6. **La API** lo sirve como JSON en `GET /products`.
 
-Measured latency between the commit in the source table and the row being
-visible through the API: a few seconds, dominated by the connector poll
-interval rather than by the processing itself.
+Latencia medida entre el commit en la tabla de origen y la aparición de la fila
+en la API: unos pocos segundos, dominados por el intervalo de sondeo del
+conector y no por el procesamiento en sí.
 
-## Design decisions
+## Decisiones de diseño
 
-**Redis as the sink instead of a file.** The exercise statement asks for
-`debezium.sink.type=file`, but Debezium Server 2.5 ships no file sink — the
-available modules are `kafka`, `kinesis`, `pubsub`, `pulsar`, `eventhubs`,
-`redis`, `http`, `nats-*`, `pravega`, `rabbitmq`, `rocketmq`, `sqs` and
-`infinispan`. Redis keeps the setup light, requires no Kafka cluster, and gives
-something a file could not: a consumer group with per-message acknowledgement.
+**Redis como sink en lugar de un fichero.** Debezium Server 2.5 no incluye un
+sink `file`: los módulos disponibles son `kafka`, `kinesis`, `pubsub`,
+`pulsar`, `eventhubs`, `redis`, `http`, `nats-*`, `pravega`, `rabbitmq`,
+`rocketmq`, `sqs` e `infinispan`. Redis mantiene el montaje ligero, no necesita
+un clúster de Kafka y ofrece algo que un fichero no podría: un consumer group
+con confirmación (ack) por mensaje.
 
-**A queue between ingestion and processing.** The processor could have read the
-WAL directly, but then a processor outage would stall replication and the WAL
-would grow unbounded. With Redis in the middle the two sides fail
-independently: Debezium keeps capturing while the processor is down, and the
-processor catches up when it returns.
+**Una cola entre la ingesta y el procesamiento.** El processor podría haber
+leído el WAL directamente, pero entonces una caída suya detendría la
+replicación y el WAL crecería sin límite. Con Redis en medio, ambos lados
+fallan de forma independiente: Debezium sigue capturando mientras el processor
+está caído, y este se pone al día cuando vuelve.
 
-**Consumer groups over plain `XREAD`.** `XREADGROUP` remembers the position per
-group and keeps unacknowledged entries in a pending list, so a processor crash
-resumes instead of losing everything delivered while it was gone. The processor
-starts reading at `0` to drain its own pending entries before switching to `>`.
+**Consumer groups en lugar de `XREAD` simple.** `XREADGROUP` recuerda la
+posición de cada grupo y mantiene las entradas sin confirmar en una lista de
+pendientes, de modo que un fallo del processor se reanuda en lugar de perder
+todo lo entregado mientras estuvo caído. El processor empieza leyendo en `0`
+para drenar sus propias entradas pendientes antes de pasar a `>`.
 
-**Commit before acknowledge.** The PostgreSQL transaction is committed *before*
-the Redis `XACK`. A crash in between causes a redelivery rather than a lost
-event, which turns the pipeline into at-least-once.
+**Commit antes del acknowledge.** La transacción de PostgreSQL se confirma
+*antes* del `XACK` de Redis. Un fallo entre ambos provoca una reentrega en
+lugar de un evento perdido, lo que convierte el pipeline en at-least-once.
 
-**Idempotency by log sequence number.** Every row stores the `source_lsn` of the
-event that produced it, and the UPSERT only applies an event whose LSN is
-strictly greater:
+**Idempotencia por log sequence number.** Cada fila guarda el `source_lsn` del
+evento que la produjo, y el UPSERT solo aplica un evento cuyo LSN sea
+estrictamente mayor:
 
 ```sql
 WHERE EXCLUDED.source_lsn > analytics.products_enriched.source_lsn
 ```
 
-A redelivered or out-of-order event is silently ignored. This is what makes the
-at-least-once delivery above safe: duplicates cannot corrupt the result.
+Un evento reentregado o desordenado se ignora en silencio. Esto es lo que hace
+seguro el at-least-once anterior: los duplicados no pueden corromper el
+resultado.
 
-**Soft deletes.** A `DELETE` in the source table flags `is_deleted` instead of
-removing the row. An analytical layer that erases history cannot answer
-questions about the past; the API hides those rows by default and exposes them
-through `?include_deleted=true`.
+**Soft deletes.** Un `DELETE` en la tabla de origen marca `is_deleted` en lugar
+de borrar la fila. Una capa analítica que borra el historial no puede responder
+preguntas sobre el pasado; la API oculta esas filas por defecto y las expone
+con `?include_deleted=true`.
 
-**Capture restricted to the source table.** `table.include.list` prevents the
-processor's own writes from being emitted, re-consumed and re-processed in an
-endless feedback loop — the failure mode of putting the source and the serving
-table in one database. The filter applies at the connector level; Debezium still
-creates its publication `FOR ALL TABLES`, so the analytics writes are decoded
-from the WAL and then discarded. Adding
-`debezium.source.publication.autocreate.mode=filtered` would keep them out of
-the replication stream altogether.
+**Captura restringida a la tabla de origen.** `table.include.list` evita que
+las propias escrituras del processor se emitan, se vuelvan a consumir y se
+reprocesen en un bucle de retroalimentación infinito, que es el modo de fallo
+de poner la tabla de origen y la de servicio en la misma base de datos. El
+filtro se aplica a nivel de conector; Debezium sigue creando su publicación
+`FOR ALL TABLES`, así que las escrituras de analytics se decodifican del WAL y
+luego se descartan. Añadir
+`debezium.source.publication.autocreate.mode=filtered` las mantendría fuera
+del flujo de replicación por completo.
 
-**Blocking driver, synchronous endpoints.** The API declares its endpoints with
-`def`, not `async def`, so FastAPI runs psycopg2 in a threadpool instead of
-blocking the event loop, and uses a connection pool because a single shared
-connection breaks as soon as two requests overlap.
+**Driver bloqueante, endpoints síncronos.** La API declara sus endpoints con
+`def`, no `async def`, de modo que FastAPI ejecuta psycopg2 en un threadpool en
+lugar de bloquear el event loop, y usa un pool de conexiones porque una única
+conexión compartida se rompe en cuanto dos peticiones se solapan.
 
-## Network and access rules
+## Red y reglas de acceso
 
-All services share the Compose network and resolve each other by service name
-(`postgres`, `redis`), never by `localhost`, which inside a container means the
-container itself.
+Todos los servicios comparten la red de Compose y se resuelven entre sí por
+nombre de servicio (`postgres`, `redis`), nunca por `localhost`, que dentro de
+un contenedor significa el propio contenedor.
 
-Only `api` needs to publish a port for the pipeline to be usable from outside;
-`5432` and `6379` are published purely for inspection during development and
-would be removed in a real deployment.
+Solo `api` necesita publicar un puerto para que el pipeline sea usable desde
+fuera; `5432` y `6379` se publican únicamente para inspección durante el
+desarrollo y se eliminarían en un despliegue real.
 
-Startup ordering is enforced with a `pg_isready` healthcheck on `postgres` plus
-`depends_on: condition: service_healthy`, so the processor and the API never
-start against a database that is not accepting connections yet. Both also run
-with `restart: unless-stopped` as a second line of defence.
+El orden de arranque se garantiza con un healthcheck `pg_isready` en `postgres`
+más `depends_on: condition: service_healthy`, de modo que el processor y la API
+nunca arrancan contra una base de datos que aún no acepta conexiones. Ambos
+usan además `restart: unless-stopped` como segunda línea de defensa.
 
-Credentials travel as environment variables, which is acceptable for a local
-exercise; a real deployment would inject them as orchestrator secrets.
+Las credenciales viajan como variables de entorno, algo aceptable en un entorno
+local de desarrollo; un despliegue real las inyectaría como secretos del
+orquestador.
 
-## Failure modes
+## Modos de fallo
 
-| Failure | Behaviour |
+| Fallo | Comportamiento |
 | --- | --- |
-| Processor down | Events accumulate in Redis; processed on restart, nothing lost. |
-| Processor crashes mid-batch | Unacknowledged entries are redelivered; the LSN guard prevents duplicates. |
-| PostgreSQL restarts | Debezium resumes from the replication slot; the processor reconnects with backoff. |
-| API down | Ingestion and processing continue; only the serving layer is unavailable. |
-| Malformed event | Logged and acknowledged, so a poison message cannot block the pending list. |
+| Processor caído | Los eventos se acumulan en Redis; se procesan al reiniciar, sin pérdidas. |
+| El processor se cae a mitad de un lote | Las entradas sin confirmar se reentregan; la guarda por LSN evita duplicados. |
+| PostgreSQL se reinicia | Debezium continúa desde el slot de replicación; el processor se reconecta con espera. |
+| API caída | La ingesta y el procesamiento continúan; solo la capa de servicio deja de estar disponible. |
+| Evento malformado | Se registra y se confirma, para que un mensaje venenoso no bloquee la lista de pendientes. |
 
-## Known limitations
+## Limitaciones conocidas
 
-* Source and serving tables live in the same PostgreSQL instance. A real
-  deployment would separate OLTP from analytics; here a schema keeps the
-  exercise to one container.
-* The processor is a single consumer. The consumer group supports scaling out,
-  but concurrent consumers would need per-key ordering to stay correct.
-* The replication slot is never dropped: if Debezium is stopped for a long time,
-  the WAL grows until it is consumed again.
-* No authentication on the API — it is read-only, but a public deployment would
-  need it.
+* La tabla de origen y la de servicio viven en la misma instancia de
+  PostgreSQL. Un despliegue real separaría OLTP de analítica; aquí un esquema
+  mantiene el proyecto en un solo contenedor.
+* El processor es un único consumidor. El consumer group permite escalar, pero
+  varios consumidores concurrentes necesitarían orden por clave para seguir
+  siendo correctos.
+* El slot de replicación nunca se elimina: si Debezium se detiene durante mucho
+  tiempo, el WAL crece hasta que se vuelva a consumir.
+* La API no tiene autenticación: es de solo lectura, pero un despliegue público
+  la necesitaría.
 
 ---
-[⬅ Back to the project README](../README.md)
+[⬅ Volver al README del proyecto](../README.md)

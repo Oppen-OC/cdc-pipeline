@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Export the CDC events captured by Debezium Server from Redis to a JSON file.
+"""Exporta a un fichero JSON los eventos CDC que Debezium Server deja en Redis.
 
-Debezium Server 2.5 has no `file` sink, so this exercise uses the Redis sink and
-reproduces the file output here: every change event is dumped, one JSON document
-per line (JSON Lines), to cdc-output/cdc_events.json.
+Debezium Server 2.5 no incluye un sink `file`, así que el pipeline usa el sink
+de Redis y este script reproduce la salida a fichero: cada evento de cambio se
+vuelca, un documento JSON por línea (JSON Lines), en cdc-output/cdc_events.json.
 
-Usage:
-    python export-events.py [--stream tutorial.public.products]
+Uso:
+    python export-events.py [--stream inventory.public.products]
 """
 
 import argparse
@@ -15,13 +15,13 @@ import pathlib
 import subprocess
 import sys
 
-DEFAULT_STREAM = "tutorial.public.products"
+DEFAULT_STREAM = "inventory.public.products"
 OUTPUT = pathlib.Path(__file__).parent / "cdc-output" / "cdc_events.json"
 OP_NAMES = {"c": "CREATE", "u": "UPDATE", "d": "DELETE", "r": "READ (snapshot)"}
 
 
 def read_stream(container, stream):
-    """Return the raw XRANGE reply of the Redis stream as parsed JSON."""
+    """Devuelve la respuesta XRANGE del stream de Redis ya parseada como JSON."""
     result = subprocess.run(
         ["docker", "exec", container, "redis-cli", "-3", "--json",
          "XRANGE", stream, "-", "+"],
@@ -33,11 +33,12 @@ def read_stream(container, stream):
 
 
 def entry_fields(fields):
-    """Normalise an XRANGE entry into (field_name, field_value) pairs.
+    """Normaliza una entrada de XRANGE en pares (nombre_campo, valor_campo).
 
-    The Debezium Redis sink stores each event as a single field whose name is
-    the serialized event key and whose value is the serialized event payload.
-    Depending on the redis-cli version the reply is either a flat list or a map.
+    El sink de Redis de Debezium guarda cada evento como un único campo cuyo
+    nombre es la clave del evento serializada y cuyo valor es el payload del
+    evento serializado. Según la versión de redis-cli, la respuesta es una lista
+    plana o un mapa.
     """
     if isinstance(fields, dict):
         return list(fields.items())
@@ -58,7 +59,7 @@ def main():
     for entry_id, fields in entries:
         for key, value in entry_fields(fields):
             if not value:
-                # Tombstone record emitted after a DELETE.
+                # Registro tombstone emitido tras un DELETE.
                 continue
             events.append({
                 "redis_entry_id": entry_id,

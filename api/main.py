@@ -1,14 +1,14 @@
-"""REST API exposing the processed data of the pipeline.
+"""API REST que expone los datos procesados del pipeline.
 
-Reads exclusively from analytics.products_enriched, the table the processor
-materialises from the CDC stream. The transactional source table is never
-touched, so the serving layer stays decoupled from the OLTP database.
+Lee exclusivamente de analytics.products_enriched, la tabla que el processor
+materializa a partir del stream CDC. La tabla transaccional de origen nunca se
+toca, de modo que la capa de servicio queda desacoplada de la base de datos OLTP.
 
-Endpoints are declared with `def` rather than `async def`: psycopg2 is a
-blocking driver, so FastAPI runs them in a threadpool instead of stalling the
+Los endpoints se declaran con `def` y no con `async def`: psycopg2 es un driver
+bloqueante, así que FastAPI los ejecuta en un threadpool en lugar de bloquear el
 event loop.
 
-Run locally:
+Ejecución en local:
     uvicorn main:app --reload --port 8000
 """
 
@@ -36,8 +36,8 @@ POOL_MAX = int(os.getenv("POOL_MAX", "10"))
 
 
 # --------------------------------------------------------------------------- #
-# Response models. Not strictly required for the endpoints to work, but they
-# are what makes /docs publish a proper response schema.
+# Modelos de respuesta. No son imprescindibles para que los endpoints funcionen,
+# pero son lo que hace que /docs publique un esquema de respuesta correcto.
 # --------------------------------------------------------------------------- #
 
 class ProductOut(BaseModel):
@@ -48,7 +48,7 @@ class ProductOut(BaseModel):
     price_with_vat: float
     category: Optional[str] = None
     created_at: Optional[datetime] = None
-    last_op: str = Field(description="Debezium operation: c, r, u or d")
+    last_op: str = Field(description="Operación de Debezium: c, r, u o d")
     is_deleted: bool
     ingested_at: datetime
 
@@ -76,15 +76,15 @@ class HealthOut(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Database access
+# Acceso a la base de datos
 # --------------------------------------------------------------------------- #
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Open the connection pool on startup and close it on shutdown.
+    """Abre el pool de conexiones al arrancar y lo cierra al apagar.
 
-    A single shared connection would corrupt the protocol as soon as two
-    requests overlap, so the API keeps a pool instead.
+    Una única conexión compartida corrompería el protocolo en cuanto dos
+    peticiones se solapen, por eso la API mantiene un pool.
     """
     app.state.pool = ThreadedConnectionPool(minconn=POOL_MIN, maxconn=POOL_MAX, **PG)
     yield
@@ -93,8 +93,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Products Analytics API",
-    description="Serving layer of the CDC pipeline: PostgreSQL -> Debezium -> "
-                "Redis -> processor -> analytics.products_enriched -> this API.",
+    description="Capa de servicio del pipeline CDC: PostgreSQL -> Debezium -> "
+                "Redis -> processor -> analytics.products_enriched -> esta API.",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -102,10 +102,10 @@ app = FastAPI(
 
 @contextmanager
 def get_conn():
-    """Borrow a connection from the pool and always give it back.
+    """Toma una conexión del pool y la devuelve siempre.
 
-    Without the finally clause every failed request would leak a connection
-    and the API would hang once the pool is exhausted.
+    Sin la cláusula finally, cada petición fallida filtraría una conexión y la
+    API se colgaría cuando el pool se agotara.
     """
     conn = app.state.pool.getconn()
     try:
@@ -115,7 +115,7 @@ def get_conn():
 
 
 def query(sql, params=None, one=False):
-    """Run a read-only query and return dict rows."""
+    """Ejecuta una consulta de solo lectura y devuelve las filas como diccionarios."""
     with get_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql, params or {})
@@ -134,10 +134,10 @@ PRODUCT_COLUMNS = """
 
 @app.get("/health", response_model=HealthOut, tags=["ops"])
 def health():
-    """Liveness plus a real database round-trip.
+    """Comprobación de vida más un viaje real a la base de datos.
 
-    Checking only that the process is alive would miss the most likely
-    failure, which is PostgreSQL being unreachable.
+    Comprobar solo que el proceso está vivo pasaría por alto el fallo más
+    probable: que PostgreSQL no sea alcanzable.
     """
     try:
         with get_conn() as conn, conn.cursor() as cur:
@@ -150,24 +150,24 @@ def health():
 
 @app.get("/products", response_model=list[ProductOut], tags=["products"])
 def list_products(
-    limit: int = Query(50, ge=1, le=500, description="Maximum rows to return"),
-    offset: int = Query(0, ge=0, description="Rows to skip"),
-    include_deleted: bool = Query(False, description="Include soft-deleted rows"),
-    category: Optional[str] = Query(None, description="Filter by category"),
+    limit: int = Query(50, ge=1, le=500, description="Máximo de filas a devolver"),
+    offset: int = Query(0, ge=0, description="Filas a saltar"),
+    include_deleted: bool = Query(False, description="Incluir las filas borradas lógicamente (soft delete)"),
+    category: Optional[str] = Query(None, description="Filtrar por categoría"),
 ):
-    """List the current state of the products.
+    """Lista el estado actual de los productos.
 
-    Soft-deleted rows are hidden by default. The optional filters live inside
-    the statement instead of being concatenated into it, which keeps a single
-    prepared query and leaves no room for SQL injection.
+    Las filas borradas lógicamente se ocultan por defecto. Los filtros
+    opcionales viven dentro de la consulta en lugar de concatenarse en ella, lo
+    que mantiene una única consulta preparada y no deja margen a la inyección SQL.
     """
     return query(
         f"""
         SELECT {PRODUCT_COLUMNS}
         FROM analytics.products_enriched
         WHERE (%(include_deleted)s OR NOT is_deleted)
-          -- the cast is needed for PostgreSQL to infer the parameter type of a
-          -- value that is only ever compared against NULL
+          -- el cast es necesario para que PostgreSQL infiera el tipo del
+          -- parámetro, que solo se compara contra NULL
           AND (%(category)s::text IS NULL OR category = %(category)s)
         ORDER BY id
         LIMIT %(limit)s OFFSET %(offset)s
@@ -183,7 +183,7 @@ def list_products(
 
 @app.get("/products/{product_id}", response_model=ProductOut, tags=["products"])
 def get_product(product_id: int):
-    """Return a single product, including soft-deleted ones."""
+    """Devuelve un único producto, incluidos los borrados lógicamente."""
     row = query(
         f"""
         SELECT {PRODUCT_COLUMNS}
@@ -200,10 +200,10 @@ def get_product(product_id: int):
 
 @app.get("/stats", response_model=StatsOut, tags=["analytics"])
 def stats():
-    """Aggregated view of the materialised table.
+    """Vista agregada de la tabla materializada.
 
-    FILTER is used instead of CASE WHEN so that every counter comes from one
-    pass over the table.
+    Se usa FILTER en lugar de CASE WHEN para que todos los contadores salgan de
+    una sola pasada por la tabla.
     """
     totals = query(
         """

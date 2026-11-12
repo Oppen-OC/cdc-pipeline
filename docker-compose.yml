@@ -1,5 +1,5 @@
 services:
-  # 1. The Source Database
+  # 1. Base de datos de origen
   postgres:
     image: postgres:15-alpine
     container_name: postgres_source
@@ -9,7 +9,7 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=inventory_db
-    # CRITICAL: PostgreSQL must be configured with logical replication enabled for Debezium to work
+    # Imprescindible: Debezium necesita PostgreSQL con replicación lógica activada.
     command: ["postgres", "-c", "wal_level=logical"]
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -19,10 +19,10 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-  # 2. Redis - lightweight sink for CDC events (no Kafka needed).
-  #    Debezium Server 2.5 has no `file` sink, so the events land in a Redis
-  #    stream and are exported to cdc-output/cdc_events.json afterwards.
-  #    Append-only persistence keeps the captured events across restarts.
+  # 2. Redis: sink ligero para los eventos CDC (sin necesidad de Kafka).
+  #    Debezium Server 2.5 no incluye sink `file`, así que los eventos van a un
+  #    stream de Redis y después se exportan a cdc-output/cdc_events.json.
+  #    La persistencia append-only conserva los eventos capturados entre reinicios.
   redis:
     image: redis:7-alpine
     container_name: redis_sink
@@ -32,7 +32,7 @@ services:
     volumes:
       - redisdata:/data
 
-  # 3. Debezium Server (Standalone, no Kafka required for this quick test)
+  # 3. Debezium Server (modo standalone, no requiere Kafka)
   debezium:
     image: debezium/server:2.5
     container_name: debezium_server
@@ -50,7 +50,7 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_STREAM=tutorial.public.products
+      - REDIS_STREAM=inventory.public.products
       - REDIS_GROUP=analytics-processor
       - PGHOST=postgres
       - PGPORT=5432

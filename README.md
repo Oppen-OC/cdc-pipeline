@@ -73,7 +73,7 @@ docker logs -f cdc_processor
 
 ```
 connected to postgres at postgres:5432
-processing stream 'tutorial.public.products' as consumer 'processor-1'
+processing stream 'inventory.public.products' as consumer 'processor-1'
 op=c id=1 lsn=26595880 applied=True
 op=c id=2 lsn=26596200 applied=True
 op=u id=1 lsn=26596432 applied=True
@@ -150,7 +150,7 @@ curl -s "localhost:8000/products?include_deleted=true" # still there, flagged
 Rewind the consumer group and let the processor reprocess everything:
 
 ```bash
-docker exec redis_sink redis-cli XGROUP SETID tutorial.public.products analytics-processor 0
+docker exec redis_sink redis-cli XGROUP SETID inventory.public.products analytics-processor 0
 docker logs -f cdc_processor
 ```
 
@@ -171,7 +171,7 @@ untouched. At-least-once delivery, exactly-once effect.
 docker compose stop processor
 docker exec postgres_source psql -U postgres -d inventory_db -c \
   "UPDATE products SET price = 39.90 WHERE id = 3;"
-docker exec redis_sink redis-cli XINFO GROUPS tutorial.public.products   # lag grows
+docker exec redis_sink redis-cli XINFO GROUPS inventory.public.products   # lag grows
 docker compose start processor                                           # lag returns to 0
 ```
 

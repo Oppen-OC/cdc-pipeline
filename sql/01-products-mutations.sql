@@ -1,5 +1,5 @@
--- Step 5 of the exercise: create the table and trigger the mutations that
--- Debezium captures from the PostgreSQL write-ahead log.
+-- Crea la tabla de origen y lanza las mutaciones que Debezium captura del
+-- write-ahead log de PostgreSQL.
 
 CREATE TABLE products (
     id SERIAL PRIMARY KEY,
@@ -9,10 +9,9 @@ CREATE TABLE products (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- With the default REPLICA IDENTITY, the WAL only carries the primary key for
--- UPDATE/DELETE, so the "before" block of those events would contain just `id`.
--- FULL makes PostgreSQL log the whole old row, which is what Step 6 asks to
--- inspect.
+-- Con la REPLICA IDENTITY por defecto, el WAL solo lleva la clave primaria en
+-- UPDATE/DELETE, así que el bloque "before" de esos eventos contendría solo
+-- `id`. FULL hace que PostgreSQL registre la fila anterior completa.
 ALTER TABLE products REPLICA IDENTITY FULL;
 
 -- op = "c" (create)

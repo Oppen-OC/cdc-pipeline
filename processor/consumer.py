@@ -1,17 +1,18 @@
-"""Streaming processor: Redis CDC stream -> enriched analytics table.
+"""Procesador en streaming: stream CDC de Redis -> tabla analítica enriquecida.
 
-Reads the change events that Debezium Server writes to a Redis stream, cleans
-and enriches them, and materialises the current state of every product into
+Lee los eventos de cambio que Debezium Server escribe en un stream de Redis,
+los limpia y enriquece, y materializa el estado actual de cada producto en
 analytics.products_enriched.
 
-Delivery is at-least-once: the PostgreSQL transaction is committed *before* the
-Redis XACK, so a crash in between causes a redelivery rather than a lost event.
-Redeliveries are harmless because the UPSERT only applies an event whose WAL
-position (source_lsn) is newer than the one already stored.
+La entrega es at-least-once: la transacción de PostgreSQL se confirma *antes*
+del XACK de Redis, así que un fallo entre ambos provoca una reentrega en lugar
+de un evento perdido. Las reentregas son inofensivas porque el UPSERT solo
+aplica un evento cuya posición en el WAL (source_lsn) es más reciente que la ya
+almacenada.
 
-Configuration comes from environment variables so that the same file runs both
-on the host (defaults point at localhost) and inside Docker Compose (the compose
-file injects the service names).
+La configuración llega por variables de entorno para que el mismo fichero
+funcione en el host (los valores por defecto apuntan a localhost) y dentro de
+Docker Compose (el compose inyecta los nombres de servicio).
 """
 
 import json
@@ -27,7 +28,7 @@ import redis
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-STREAM     = os.getenv("REDIS_STREAM", "tutorial.public.products")
+STREAM     = os.getenv("REDIS_STREAM", "inventory.public.products")
 GROUP      = os.getenv("REDIS_GROUP", "analytics-processor")
 CONSUMER   = os.getenv("HOSTNAME", "consumer-local")
 
@@ -43,7 +44,8 @@ VAT_RATE   = float(os.getenv("VAT_RATE", "0.21"))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "50"))
 BLOCK_MS   = int(os.getenv("BLOCK_MS", "5000"))
 
-# Keyword -> category. First match wins, hence a list instead of a dict.
+# Palabra clave -> categoría. Gana la primera coincidencia, de ahí la lista en
+# lugar de un diccionario.
 CATEGORY_RULES = [
     (("mouse", "keyboard", "hub", "webcam", "headset"), "Peripherals"),
     (("monitor", "display", "screen"),                  "Displays"),
@@ -58,11 +60,11 @@ logging.basicConfig(
 )
 log = logging.getLogger("processor")
 
-# A single statement covers every operation. For a DELETE the row is kept and
-# flagged instead of being removed (soft delete), so the analytics layer keeps
-# the history. The WHERE clause on the DO UPDATE branch is what makes the whole
-# pipeline idempotent: an event that is redelivered, or that arrives out of
-# order, carries an LSN that is not greater than the stored one and is ignored.
+# Una sola sentencia cubre todas las operaciones. En un DELETE la fila se
+# conserva y se marca en lugar de borrarse (soft delete), para que la capa
+# analítica mantenga el historial. La cláusula WHERE de la rama DO UPDATE es lo
+# que hace idempotente todo el pipeline: un evento reentregado, o que llega
+# desordenado, trae un LSN no mayor que el almacenado y se ignora.
 UPSERT = """
 INSERT INTO analytics.products_enriched
     (id, name, description, price, price_with_vat, category,
@@ -89,7 +91,7 @@ running = True
 
 
 def stop(signum, _frame):
-    """Finish the current batch and exit cleanly on Ctrl-C / docker stop."""
+    """Termina el lote en curso y sale limpiamente con Ctrl-C / docker stop."""
     global running
     running = False
     log.info("signal %s received, shutting down", signum)
@@ -104,7 +106,7 @@ def categorize(name):
 
 
 def to_datetime(value):
-    """Debezium emits TIMESTAMP columns as microseconds since the epoch."""
+    """Debezium emite las columnas TIMESTAMP como microsegundos desde la época."""
     if value is None:
         return None
     if isinstance(value, str):
@@ -113,17 +115,17 @@ def to_datetime(value):
 
 
 def transform(payload):
-    """Turn a Debezium change event payload into a row of the analytics table.
+    """Convierte el payload de un evento de cambio de Debezium en una fila de la tabla analítica.
 
-    Returns None for events that carry no row state (tombstones, truncates).
+    Devuelve None para los eventos que no llevan estado de fila (tombstones, truncates).
     """
     op = payload.get("op")
     if op not in ("c", "r", "u", "d"):
         log.warning("ignoring event with unsupported op=%s", op)
         return None
 
-    # A DELETE has no `after` block, every other operation has no useful
-    # `before` block. REPLICA IDENTITY FULL is what makes `before` complete.
+    # Un DELETE no tiene bloque `after`; en el resto de operaciones el bloque
+    # `before` no aporta nada. REPLICA IDENTITY FULL es lo que completa `before`.
     row = payload.get("after") or payload.get("before")
     if not row:
         return None
@@ -144,14 +146,14 @@ def transform(payload):
 
 
 def handle_entry(cur, fields):
-    """Apply every change event stored in one Redis stream entry."""
+    """Aplica cada evento de cambio almacenado en una entrada del stream de Redis."""
     applied = 0
-    # The Debezium Redis sink stores each event as a single field whose name is
-    # the serialized event key and whose value is the serialized event payload,
-    # so the field names cannot be hardcoded.
+    # El sink de Redis de Debezium guarda cada evento como un único campo cuyo
+    # nombre es la clave del evento serializada y cuyo valor es el payload
+    # serializado, así que los nombres de campo no se pueden fijar en el código.
     for _key, raw_value in fields.items():
         if not raw_value:
-            continue  # tombstone record
+            continue  # registro tombstone
         payload = json.loads(raw_value).get("payload")
         if not payload:
             continue
@@ -168,7 +170,7 @@ def handle_entry(cur, fields):
 
 
 def connect_postgres(retries=30, delay=2):
-    """Connect to PostgreSQL, retrying while the database container starts."""
+    """Conecta a PostgreSQL, reintentando mientras arranca el contenedor de la base de datos."""
     for attempt in range(1, retries + 1):
         try:
             conn = psycopg2.connect(**PG)
@@ -181,11 +183,11 @@ def connect_postgres(retries=30, delay=2):
 
 
 def ensure_group(client):
-    """Create the consumer group, starting at the beginning of the stream.
+    """Crea el consumer group, empezando por el principio del stream.
 
-    MKSTREAM lets the processor start before Debezium has emitted its first
-    event; BUSYGROUP simply means the group already exists from a previous run,
-    in which case the stored position is kept.
+    MKSTREAM permite arrancar el processor antes de que Debezium haya emitido su
+    primer evento; BUSYGROUP solo indica que el grupo ya existe de una ejecución
+    anterior, en cuyo caso se conserva la posición almacenada.
     """
     try:
         client.xgroup_create(STREAM, GROUP, id="0", mkstream=True)
@@ -204,9 +206,9 @@ def main():
     ensure_group(client)
     conn = connect_postgres()
 
-    # "0" replays this consumer's pending (delivered but never acknowledged)
-    # entries after a crash; once they are drained the loop switches to ">",
-    # which delivers only new events.
+    # "0" reproduce las entradas pendientes de este consumidor (entregadas pero
+    # nunca confirmadas) tras un fallo; una vez drenadas, el bucle pasa a ">",
+    # que entrega solo eventos nuevos.
     cursor_id = "0"
     log.info("processing stream '%s' as consumer '%s'", STREAM, CONSUMER)
 
@@ -222,11 +224,11 @@ def main():
             continue
 
         if not response:
-            continue  # block timeout, no new events
+            continue  # timeout del bloqueo, no hay eventos nuevos
 
         for _stream, entries in response:
             if cursor_id == "0" and not entries:
-                # No pending entries left: move on to live events.
+                # No quedan entradas pendientes: se pasa a los eventos en vivo.
                 cursor_id = ">"
                 continue
 
@@ -236,13 +238,13 @@ def main():
                         handle_entry(cur, fields)
                     conn.commit()
                 except psycopg2.Error as exc:
-                    # Leave the entry unacknowledged so that it is redelivered.
+                    # Se deja la entrada sin confirmar para que se reentregue.
                     conn.rollback()
                     log.error("database error on entry %s: %s", entry_id, exc)
                     continue
                 except (KeyError, ValueError, TypeError) as exc:
-                    # Malformed event: acknowledge it, otherwise it would block
-                    # the pending list forever.
+                    # Evento malformado: se confirma, de lo contrario bloquearía
+                    # la lista de pendientes para siempre.
                     conn.rollback()
                     log.error("skipping malformed entry %s: %s", entry_id, exc)
 

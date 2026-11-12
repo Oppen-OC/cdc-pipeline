@@ -1,34 +1,36 @@
--- Storage layer of the pipeline: the serving table the processor materialises
--- from the CDC stream and the API reads from.
+-- Capa de almacenamiento del pipeline: la tabla de servicio que el processor
+-- materializa a partir del stream CDC y de la que lee la API.
 --
--- It is kept in a separate schema from the source table so that the OLTP side
--- (public.products) and the analytical side stay clearly separated. In a real
--- deployment this would be a different database or cluster altogether; here a
--- schema keeps the exercise to a single PostgreSQL container.
+-- Vive en un esquema aparte de la tabla de origen para que el lado OLTP
+-- (public.products) y el analítico queden claramente separados. En un
+-- despliegue real serían bases de datos o clústeres distintos; aquí un esquema
+-- mantiene el proyecto en un solo contenedor de PostgreSQL.
 --
--- The whole script is idempotent, so it can be re-run against a live database.
+-- Todo el script es idempotente, así que puede volver a ejecutarse sobre una
+-- base de datos en marcha.
 
 CREATE SCHEMA IF NOT EXISTS analytics;
 
 CREATE TABLE IF NOT EXISTS analytics.products_enriched (
-    -- Same primary key as the source row: the processor UPSERTs on it, so the
-    -- table always holds the current state of every product.
+    -- Misma clave primaria que la fila de origen: el processor hace UPSERT
+    -- sobre ella, así que la tabla siempre guarda el estado actual de cada
+    -- producto.
     id              INTEGER PRIMARY KEY,
 
-    -- Fields carried over from the source table.
+    -- Campos copiados de la tabla de origen.
     name            VARCHAR(255)  NOT NULL,
     description     TEXT,
     price           NUMERIC(10,2) NOT NULL,
 
-    -- Enrichment added by the processor.
+    -- Enriquecimiento añadido por el processor.
     price_with_vat  NUMERIC(10,2) NOT NULL,
     category        VARCHAR(50),
 
-    -- Debezium emits TIMESTAMP columns as microseconds since the epoch; the
-    -- processor converts them before writing.
+    -- Debezium emite las columnas TIMESTAMP como microsegundos desde la época;
+    -- el processor las convierte antes de escribir.
     created_at      TIMESTAMPTZ,
 
-    -- CDC lineage.
+    -- Linaje CDC.
     source_lsn      BIGINT        NOT NULL,
     last_op         CHAR(1)       NOT NULL,
     is_deleted      BOOLEAN       NOT NULL DEFAULT FALSE,
@@ -36,24 +38,24 @@ CREATE TABLE IF NOT EXISTS analytics.products_enriched (
 );
 
 COMMENT ON COLUMN analytics.products_enriched.source_lsn IS
-    'Write-ahead log position of the change event that produced this row. The '
-    'processor only applies an event whose LSN is greater than the stored one, '
-    'which makes the at-least-once delivery of the Redis stream idempotent.';
+    'Posición en el write-ahead log del evento de cambio que produjo esta fila. '
+    'El processor solo aplica un evento cuyo LSN sea mayor que el almacenado, lo '
+    'que hace idempotente la entrega at-least-once del stream de Redis.';
 
 COMMENT ON COLUMN analytics.products_enriched.last_op IS
-    'Debezium operation code of the last applied event: c (create), '
-    'r (snapshot read), u (update) or d (delete).';
+    'Código de operación de Debezium del último evento aplicado: c (create), '
+    'r (lectura de snapshot), u (update) o d (delete).';
 
 COMMENT ON COLUMN analytics.products_enriched.is_deleted IS
-    'Soft delete. A DELETE in the source table flags the row instead of '
-    'removing it, so the analytical layer keeps the history.';
+    'Borrado lógico (soft delete). Un DELETE en la tabla de origen marca la fila '
+    'en lugar de eliminarla, de modo que la capa analítica conserva el historial.';
 
--- The API filters out deleted rows by default; a partial index keeps that
--- lookup cheap without indexing the deleted ones.
+-- La API filtra por defecto las filas borradas; un índice parcial mantiene
+-- barata esa consulta sin indexar las borradas.
 CREATE INDEX IF NOT EXISTS products_enriched_active_idx
     ON analytics.products_enriched (id)
     WHERE NOT is_deleted;
 
--- Supports the aggregation behind GET /stats.
+-- Da soporte a la agregación de GET /stats.
 CREATE INDEX IF NOT EXISTS products_enriched_category_idx
     ON analytics.products_enriched (category);
