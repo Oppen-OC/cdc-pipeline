@@ -12,6 +12,7 @@ Ejecución en local:
     uvicorn main:app --reload --port 8000
 """
 
+import logging
 import os
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
@@ -33,6 +34,9 @@ PG = {
 
 POOL_MIN = int(os.getenv("POOL_MIN", "1"))
 POOL_MAX = int(os.getenv("POOL_MAX", "10"))
+
+# Logger de uvicorn: los errores salen en el log del servidor con su mismo formato.
+log = logging.getLogger("uvicorn.error")
 
 
 # --------------------------------------------------------------------------- #
@@ -134,7 +138,7 @@ PRODUCT_COLUMNS = """
 
 @app.get("/health", response_model=HealthOut, tags=["ops"])
 def health():
-    """Comprobación de vida más un viaje real a la base de datos.
+    """Comprobación de vida más una consulta real a la base de datos.
 
     Comprobar solo que el proceso está vivo pasaría por alto el fallo más
     probable: que PostgreSQL no sea alcanzable.
@@ -144,7 +148,9 @@ def health():
             cur.execute("SELECT 1")
             cur.fetchone()
     except psycopg2.Error as exc:
-        raise HTTPException(status_code=503, detail=f"database unavailable: {exc}")
+        # El detalle de psycopg2 (host, puerto, usuario) va al log, no al cliente.
+        log.error("health check failed: %s", exc)
+        raise HTTPException(status_code=503, detail="database unavailable")
     return {"status": "ok", "database": "reachable"}
 
 
