@@ -2,8 +2,9 @@
 __pycache__/
 *.pyc
 
-# Estado de ejecución de Debezium: offsets.dat está ligado a una instancia
-# concreta de la base de datos (versionarlo haría que un `docker compose up`
-# nuevo reanudara desde una posición del WAL que ya no existe) y
-# cdc_events.json lo regenera export-events.py.
+# Salida de export-events.py (cdc_events.json), regenerable. Los offsets de
+# Debezium ya no están aquí: viven en el volumen con nombre `debezium-data`.
 cdc-output/
+
+# Credenciales locales (la plantilla versionada es .env.example)
+.env

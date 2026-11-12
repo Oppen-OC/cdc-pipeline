@@ -6,9 +6,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=inventory_db
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-inventory_db}
     # Imprescindible: Debezium necesita PostgreSQL con replicación lógica activada.
     command: ["postgres", "-c", "wal_level=logical"]
     volumes:
@@ -18,8 +18,10 @@ services:
     healthcheck:
       # -h 127.0.0.1: durante el initdb la imagen levanta un servidor temporal
       # que solo escucha por socket Unix; sin -h el healthcheck daría "healthy"
-      # antes de que terminen los scripts.
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d inventory_db"]
+      # antes de que terminen los scripts. Los `$$` hacen que Compose no
+      # interpole y use las variables del propio contenedor, así el healthcheck
+      # siempre coincide con las credenciales con las que arrancó PostgreSQL.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -52,6 +54,13 @@ services:
       # offsets; si no, tras reiniciar Debezium reanudaría en un LSN obsoleto y
       # omitiría los primeros eventos.
       - debezium-data:/debezium/data
+    environment:
+      # Debezium Server traduce variables de entorno a propiedades (override de
+      # application.properties): DEBEZIUM_SOURCE_DATABASE_USER ->
+      # debezium.source.database.user.
+      - DEBEZIUM_SOURCE_DATABASE_USER=${POSTGRES_USER:-postgres}
+      - DEBEZIUM_SOURCE_DATABASE_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - DEBEZIUM_SOURCE_DATABASE_DBNAME=${POSTGRES_DB:-inventory_db}
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,9 +80,9 @@ services:
       - REDIS_GROUP=analytics-processor
       - PGHOST=postgres
       - PGPORT=5432
-      - PGDATABASE=inventory_db
-      - PGUSER=postgres
-      - PGPASSWORD=postgres
+      - PGDATABASE=${POSTGRES_DB:-inventory_db}
+      - PGUSER=${POSTGRES_USER:-postgres}
+      - PGPASSWORD=${POSTGRES_PASSWORD:-postgres}
       - VAT_RATE=0.21
     depends_on:
       postgres:
@@ -91,9 +100,9 @@ services:
     environment:
       - PGHOST=postgres
       - PGPORT=5432
-      - PGDATABASE=inventory_db
-      - PGUSER=postgres
-      - PGPASSWORD=postgres
+      - PGDATABASE=${POSTGRES_DB:-inventory_db}
+      - PGUSER=${POSTGRES_USER:-postgres}
+      - PGPASSWORD=${POSTGRES_PASSWORD:-postgres}
     depends_on:
       postgres:
         condition: service_healthy

@@ -71,6 +71,8 @@ docker compose up -d --build
 docker compose ps          # cinco servicios, postgres y api healthy
 ```
 
+`cp .env.example .env` para cambiar credenciales (opcional).
+
 Los esquemas (`public.products` y `analytics.products_enriched`) se crean solos
 en el primer arranque con los scripts de `sql/init/`. Solo se ejecutan con el
 volumen vacío; para reinicializar, `docker compose down -v`.
@@ -80,7 +82,7 @@ activo; si no, los cambios anteriores se pierden. Repite el comando hasta que
 devuelva `t`:
 
 ```bash
-docker exec postgres_source psql -U postgres -d inventory_db -tAc   "SELECT active FROM pg_replication_slots WHERE slot_name='debezium'"
+docker exec postgres_source psql -U postgres -d inventory_db -tAc "SELECT active FROM pg_replication_slots WHERE slot_name='debezium'"
 ```
 
 Generar los primeros eventos de cambio:
