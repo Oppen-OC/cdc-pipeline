@@ -5,12 +5,11 @@ Asumen VAT_RATE por defecto (0.21).
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 import consumer
+import pytest
 
 SAMPLE_EVENTS = Path(__file__).resolve().parent.parent / "docs" / "sample-events.jsonl"
 
@@ -54,7 +53,7 @@ def test_to_datetime_string_is_returned_as_is():
 
 def test_to_datetime_microseconds_to_utc():
     assert consumer.to_datetime(1786981502839123) == datetime(
-        2026, 8, 17, 15, 45, 2, 839123, tzinfo=timezone.utc
+        2026, 8, 17, 15, 45, 2, 839123, tzinfo=UTC
     )
 
 

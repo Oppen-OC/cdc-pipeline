@@ -1,5 +1,7 @@
 # cdc-pipeline
 
+[![CI](https://github.com/Oppen-OC/cdc-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Oppen-OC/cdc-pipeline/actions/workflows/ci.yml)
+
 Los cambios de PostgreSQL se capturan del WAL con Debezium, se transportan por
 Redis Streams, los enriquece un procesador Python, se materializan en un
 esquema analítico y se sirven con FastAPI, en pocos segundos y sin tocar la
@@ -107,6 +109,8 @@ op=c id=2 lsn=26596200 applied=True
 op=u id=1 lsn=26596432 applied=True
 op=d id=2 lsn=26596664 applied=True
 ```
+
+Para comprobar todo el recorrido (Postgres, Debezium, Redis, procesador y API) de una vez, `bash scripts/e2e.sh`; es la misma prueba que ejecuta el CI. Parte de un entorno limpio (`docker compose down -v`) y deja el stack levantado.
 
 Para parar y limpiar: `docker compose down -v`.
 
@@ -239,6 +243,8 @@ Detalle en [docs/architecture.md](./docs/architecture.md#limitaciones-conocidas)
 ```
 .
 ├── docker-compose.yml                    # todo el stack
+├── .github/workflows/ci.yml              # CI: lint, tests unitarios y prueba e2e
+├── scripts/e2e.sh                        # prueba end-to-end del pipeline completo
 ├── debezium-conf/application.properties  # configuración de origen y sink del CDC
 ├── sql/
 │   ├── init/                             # se ejecuta solo en el primer arranque

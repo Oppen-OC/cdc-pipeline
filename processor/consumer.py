@@ -27,7 +27,7 @@ import os
 import signal
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import psycopg2
 import redis
@@ -117,7 +117,7 @@ def to_datetime(value):
         return None
     if isinstance(value, str):
         return value
-    return datetime.fromtimestamp(value / 1_000_000, tz=timezone.utc)
+    return datetime.fromtimestamp(value / 1_000_000, tz=UTC)
 
 
 def transform(payload):
@@ -157,7 +157,7 @@ def handle_entry(cur, fields):
     # El sink de Redis de Debezium guarda cada evento como un único campo cuyo
     # nombre es la clave del evento serializada y cuyo valor es el payload
     # serializado, así que los nombres de campo no se pueden fijar en el código.
-    for _key, raw_value in fields.items():
+    for raw_value in fields.values():
         if not raw_value:
             continue  # registro tombstone
         payload = json.loads(raw_value).get("payload")

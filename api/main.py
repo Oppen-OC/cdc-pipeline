@@ -16,7 +16,6 @@ import logging
 import os
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
-from typing import Optional
 
 import psycopg2
 from fastapi import FastAPI, HTTPException, Query
@@ -47,30 +46,30 @@ log = logging.getLogger("uvicorn.error")
 class ProductOut(BaseModel):
     id: int
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     price: float
     price_with_vat: float
-    category: Optional[str] = None
-    created_at: Optional[datetime] = None
+    category: str | None = None
+    created_at: datetime | None = None
     last_op: str = Field(description="Operación de Debezium: c, r, u o d")
     is_deleted: bool
     ingested_at: datetime
 
 
 class CategoryStat(BaseModel):
-    category: Optional[str] = None
+    category: str | None = None
     products: int
-    avg_price: Optional[float] = None
+    avg_price: float | None = None
 
 
 class StatsOut(BaseModel):
     total: int
     active: int
     deleted: int
-    avg_price: Optional[float] = None
-    min_price: Optional[float] = None
-    max_price: Optional[float] = None
-    last_ingested_at: Optional[datetime] = None
+    avg_price: float | None = None
+    min_price: float | None = None
+    max_price: float | None = None
+    last_ingested_at: datetime | None = None
     by_category: list[CategoryStat]
 
 
@@ -120,10 +119,9 @@ def get_conn():
 
 def query(sql, params=None, one=False):
     """Ejecuta una consulta de solo lectura y devuelve las filas como diccionarios."""
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, params or {})
-            return cur.fetchone() if one else cur.fetchall()
+    with get_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, params or {})
+        return cur.fetchone() if one else cur.fetchall()
 
 
 # --------------------------------------------------------------------------- #
@@ -159,7 +157,7 @@ def list_products(
     limit: int = Query(50, ge=1, le=500, description="Máximo de filas a devolver"),
     offset: int = Query(0, ge=0, description="Filas a saltar"),
     include_deleted: bool = Query(False, description="Incluir las filas borradas lógicamente (soft delete)"),
-    category: Optional[str] = Query(None, description="Filtrar por categoría"),
+    category: str | None = Query(None, description="Filtrar por categoría"),
 ):
     """Lista el estado actual de los productos.
 

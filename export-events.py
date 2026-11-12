@@ -25,7 +25,7 @@ def read_stream(container, stream):
     result = subprocess.run(
         ["docker", "exec", container, "redis-cli", "-3", "--json",
          "XRANGE", stream, "-", "+"],
-        capture_output=True, text=True,
+        check=False, capture_output=True, text=True,
     )
     if result.returncode != 0:
         sys.exit(f"redis-cli failed: {result.stderr.strip()}")
@@ -78,7 +78,7 @@ def main():
         payload = event["value"]["payload"]
         op = payload.get("op", "?")
         print(f"{op:<4} {OP_NAMES.get(op, 'UNKNOWN'):<16} "
-              f"{str(payload.get('before')):<40.38} {payload.get('after')}")
+              f"{payload.get('before')!s:<40.38} {payload.get('after')}")
 
 
 if __name__ == "__main__":
