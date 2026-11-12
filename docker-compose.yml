@@ -23,6 +23,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
   # 2. Redis: sink ligero para los eventos CDC (sin necesidad de Kafka).
   #    Debezium Server 2.5 no incluye sink `file`, así que los eventos van a un
   #    stream de Redis y después se exportan a cdc-output/cdc_events.json.
@@ -35,6 +36,11 @@ services:
       - "6379:6379"
     volumes:
       - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   # 3. Debezium Server (modo standalone, no requiere Kafka)
   debezium:
@@ -44,9 +50,13 @@ services:
       - ./debezium-conf:/debezium/conf
       - ./cdc-output:/debezium/data
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
+  # 4. Processor: consume el stream de Redis y escribe en la tabla de analítica.
   processor:
     build: ./processor
     container_name: cdc_processor
@@ -66,9 +76,10 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
 
+  # 5. API REST de lectura sobre PostgreSQL.
   api:
     build: ./api
     container_name: products_api

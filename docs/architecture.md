@@ -142,10 +142,12 @@ Solo `api` necesita publicar un puerto para que el pipeline sea usable desde
 fuera; `5432` y `6379` se publican únicamente para inspección durante el
 desarrollo y se eliminarían en un despliegue real.
 
-El orden de arranque se garantiza con un healthcheck `pg_isready` en `postgres`
-más `depends_on: condition: service_healthy`, de modo que el processor y la API
-nunca arrancan contra una base de datos que aún no acepta conexiones. Ambos
-usan además `restart: unless-stopped` como segunda línea de defensa.
+El orden de arranque se garantiza con healthchecks (`pg_isready` en `postgres`,
+`redis-cli ping` en `redis`) más `depends_on: condition: service_healthy`, de
+modo que Debezium, el processor y la API nunca arrancan contra un servicio que
+aún no acepta conexiones. Los tres usan además `restart: unless-stopped` como
+segunda línea de defensa: si Postgres se reinicia y Debezium pierde la conexión,
+sale y Compose lo vuelve a levantar.
 
 Las credenciales viajan como variables de entorno, algo aceptable en un entorno
 local de desarrollo; un despliegue real las inyectaría como secretos del
@@ -157,7 +159,7 @@ orquestador.
 | --- | --- |
 | Processor caído | Los eventos se acumulan en Redis; se procesan al reiniciar, sin pérdidas. |
 | El processor se cae a mitad de un lote | Las entradas sin confirmar se reentregan; la guarda por LSN evita duplicados. |
-| PostgreSQL se reinicia | Debezium continúa desde el slot de replicación; el processor se reconecta con espera. |
+| PostgreSQL se reinicia | Debezium pierde la conexión y sale; `restart: unless-stopped` lo relanza y continúa desde el slot de replicación sin perder cambios. El processor se reconecta con espera. |
 | API caída | La ingesta y el procesamiento continúan; solo la capa de servicio deja de estar disponible. |
 | Evento malformado | Se registra y se confirma, para que un mensaje venenoso no bloquee la lista de pendientes. |
 
