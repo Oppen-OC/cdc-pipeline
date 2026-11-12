@@ -120,12 +120,13 @@ con `?include_deleted=true`.
 **Captura restringida a la tabla de origen.** `table.include.list` evita que
 las propias escrituras del processor se emitan, se vuelvan a consumir y se
 reprocesen en un bucle de retroalimentación infinito, que es el modo de fallo
-de poner la tabla de origen y la de servicio en la misma base de datos. El
-filtro se aplica a nivel de conector; Debezium sigue creando su publicación
-`FOR ALL TABLES`, así que las escrituras de analytics se decodifican del WAL y
-luego se descartan. Añadir
-`debezium.source.publication.autocreate.mode=filtered` las mantendría fuera
-del flujo de replicación por completo.
+de poner la tabla de origen y la de servicio en la misma base de datos. Además,
+`debezium.source.publication.autocreate.mode=filtered` hace que Debezium cree
+la publicación solo con `public.products` en lugar de `FOR ALL TABLES`, de modo
+que las escrituras de analytics ni siquiera se decodifican del WAL. Requiere
+que la tabla exista al arrancar el conector, algo que garantiza `sql/init/`. Una
+publicación ya existente no se modifica: para aplicar el cambio hay que
+reinicializar con `docker compose down -v`.
 
 **Driver bloqueante, endpoints síncronos.** La API declara sus endpoints con
 `def`, no `async def`, de modo que FastAPI ejecuta psycopg2 en un threadpool en

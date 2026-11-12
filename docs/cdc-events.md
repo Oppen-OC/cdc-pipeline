@@ -51,8 +51,10 @@ Observaciones:
 * `source.lsn` y `source.txId` vinculan el evento con una posición del WAL y una
   transacción de PostgreSQL. Ese mismo LSN es el que acaba en `offsets.dat`, el
   almacén de offsets de Debezium (último LSN confirmado), y con él Debezium
-  reanuda tras un reinicio sin reproducir eventos. El fichero se regenera en
-  cada ejecución y está excluido de git en `cdc-output/`.
+  reanuda tras un reinicio sin reproducir eventos. El fichero vive en el
+  volumen con nombre `debezium-data` (no en `cdc-output/`) y lo borra
+  `docker compose down -v`, de modo que tras un reinicio completo Debezium
+  vuelve a empezar desde cero.
 * `ts_ms` de primer nivel es el momento en que Debezium procesó el evento,
   mientras que `source.ts_ms` es el momento en que el cambio se confirmó en la
   base de datos. La diferencia entre ambos es la latencia del CDC (~360 ms

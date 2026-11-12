@@ -48,7 +48,10 @@ services:
     container_name: debezium_server
     volumes:
       - ./debezium-conf:/debezium/conf
-      - ./cdc-output:/debezium/data
+      # Volumen con nombre (no bind mount) para que `down -v` también borre los
+      # offsets; si no, tras reiniciar Debezium reanudaría en un LSN obsoleto y
+      # omitiría los primeros eventos.
+      - debezium-data:/debezium/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -104,3 +107,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  debezium-data:
