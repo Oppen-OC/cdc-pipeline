@@ -10,6 +10,12 @@ de un evento perdido. Las reentregas son inofensivas porque el UPSERT solo
 aplica un evento cuya posición en el WAL (source_lsn) es más reciente que la ya
 almacenada.
 
+Ante un error de PostgreSQL se distingue por tipo. Si la conexión se pierde
+(OperationalError, InterfaceError) la entrada no se confirma: el procesador
+reconecta por sí mismo y vuelve a releer los pendientes. Cualquier otro error de
+base de datos es determinista (p. ej. un dato que no cabe en la columna), así
+que se registra y se confirma para no bloquear la lista de pendientes.
+
 La configuración llega por variables de entorno para que el mismo fichero
 funcione en el host (los valores por defecto apuntan a localhost) y dentro de
 Docker Compose (el compose inyecta los nombres de servicio).
@@ -237,11 +243,23 @@ def main():
                     with conn.cursor() as cur:
                         handle_entry(cur, fields)
                     conn.commit()
+                except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+                    # Conexión perdida (p. ej. PostgreSQL reiniciado) o deadlock:
+                    # transitorio, así que no se confirma. Se reconecta si hace
+                    # falta y se vuelve a "0" para releer los pendientes; el resto
+                    # del lote se relee desde ahí, por eso se sale del bucle.
+                    log.error("database unavailable on entry %s: %s", entry_id, exc)
+                    if conn.closed:
+                        conn = connect_postgres()
+                    else:
+                        conn.rollback()
+                    cursor_id = "0"
+                    break
                 except psycopg2.Error as exc:
-                    # Se deja la entrada sin confirmar para que se reentregue.
+                    # Error de datos determinista (DataError, IntegrityError...):
+                    # reintentar no lo arregla, se confirma igual que un malformado.
                     conn.rollback()
-                    log.error("database error on entry %s: %s", entry_id, exc)
-                    continue
+                    log.error("skipping entry %s after database error: %s", entry_id, exc)
                 except (KeyError, ValueError, TypeError) as exc:
                     # Evento malformado: se confirma, de lo contrario bloquearía
                     # la lista de pendientes para siempre.

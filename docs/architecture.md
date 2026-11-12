@@ -161,9 +161,10 @@ orquestador.
 | --- | --- |
 | Processor caído | Los eventos se acumulan en Redis; se procesan al reiniciar, sin pérdidas. |
 | El processor se cae a mitad de un lote | Las entradas sin confirmar se reentregan; la guarda por LSN evita duplicados. |
-| PostgreSQL se reinicia | Debezium se reconecta por sí mismo con sus reintentos internos y continúa desde el slot de replicación (`restart: unless-stopped` es el respaldo si el proceso sale). El processor se cae con el primer evento tras perder la conexión, la política `restart` lo relanza y retoma los pendientes del stream. |
+| PostgreSQL se reinicia | Debezium se reconecta por sí mismo con sus reintentos internos y continúa desde el slot de replicación (`restart: unless-stopped` es el respaldo si el proceso sale). El processor detecta la conexión perdida, reconecta por sí mismo (sin que Docker reinicie el contenedor) y relee los pendientes del stream, sin perder eventos. |
 | API caída | La ingesta y el procesamiento continúan; solo la capa de servicio deja de estar disponible. |
 | Evento malformado | Se registra y se confirma, para que un mensaje venenoso no bloquee la lista de pendientes. |
+| Error de datos determinista (`DataError`, `IntegrityError`) | Se registra y se confirma: reintentarlo no lo arregla y bloquearía los pendientes para siempre. |
 
 ## Limitaciones conocidas
 
